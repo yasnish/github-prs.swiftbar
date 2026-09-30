@@ -1,0 +1,21 @@
+# github-prs プラグインの設定ファイル（サンプル）
+# 同じフォルダに github-prs.conf としてコピーして編集してください
+#   cp github-prs.conf.example github-prs.conf
+#
+# チェックしたいリポジトリを "owner/repo" 形式で並べて記述してください
+# (ローカル clone は不要。gh 経由で直接 GitHub を参照します)
+REPOS=(
+  "octocat/hello-world"
+  "your-org/your-repo"
+)
+
+# PR 作成者ごとの表示優先度とアイコン（"login|icon" 形式）
+# - 上に書いたものほど優先して表示されます
+# - "*" はリストにないすべての作成者（人間など）を表します
+#   ("*" を省略した場合は最後尾・🧑 扱い)
+# - アイコンは省略可（"login" だけでも可）
+AUTHOR_PRIORITY=(
+  "*|🧑"
+  "app/github-actions|🤖"
+  "app/dependabot|📦"
+)
