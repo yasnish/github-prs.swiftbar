@@ -48,7 +48,7 @@ for i in "${!REPOS[@]}"; do
   (
     REPO_NAME="${REPO#*/}"
     PRS=$(gh pr list -R "$REPO" --search "is:open involves:@me" \
-      --json number,title,url,author,reviews,reviewRequests 2>/dev/null)
+      --json number,title,url,author,labels,reviews,reviewRequests 2>/dev/null)
     if [ -n "$PRS" ] && [ "$PRS" != "[]" ]; then
       echo "$PRS" | jq --arg repo "$REPO_NAME" --arg full "$REPO" --argjson idx "$i" \
         'map(. + {repo: $repo, repo_full: $full, repo_index: $idx})' \
@@ -67,6 +67,7 @@ BASE_PRS=$(echo "$ALL_PRS" | jq --arg me "$MY_USER" --argjson rules "$AUTHOR_RUL
   ($rules | map(select(.login == "*")) | first // {icon: "🧑", rank: ($rules | length)}) as $default
   | map((.author.login // "ghost") as $login
     | ($rules | map(select(.login == $login)) | first // $default) as $rule
+    | ($login == "app/dependabot" and ((.labels // []) | map(.name | ascii_downcase) | index("security") != null)) as $sec
     | {
     key: "\(.repo_full)#\(.number)",
     repo_full: .repo_full,
@@ -77,7 +78,8 @@ BASE_PRS=$(echo "$ALL_PRS" | jq --arg me "$MY_USER" --argjson rules "$AUTHOR_RUL
     repo_index: .repo_index,
     author: $login,
     author_rank: $rule.rank,
-    author_icon: $rule.icon,
+    # dependabot のセキュリティアップデート PR（security ラベル付き）は 🚨 で区別する
+    author_icon: (if $sec then "🚨" else $rule.icon end),
     approved_by_me: (((.reviews // []) | map(select(.author.login == $me and .state == "APPROVED"))) | length > 0),
     reviewed_by_me: (((.reviews // []) | map(select(.author.login == $me))) | length > 0),
     my_last_review_at: (((.reviews // []) | map(select(.author.login == $me) | .submittedAt)) | max),
