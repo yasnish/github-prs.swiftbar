@@ -12,6 +12,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="${GITHUB_PRS_CONFIG:-$SCRIPT_DIR/github-prs.conf}"
 REPOS=()
 AUTHOR_PRIORITY=()
+SECURITY_ICON="🚨"
+DRAFT_ICON="📝"
 if [ -f "$CONFIG_FILE" ]; then
   # shellcheck source=/dev/null
   source "$CONFIG_FILE"
@@ -62,7 +64,7 @@ ALL_PRS=$(cat "$WORK_DIR"/*.json 2>/dev/null | jq -s 'add // []')
 [ -z "$ALL_PRS" ] && ALL_PRS="[]"
 
 # 必要なフィールドだけに整形する
-BASE_PRS=$(echo "$ALL_PRS" | jq --arg me "$MY_USER" --argjson rules "$AUTHOR_RULES" '
+BASE_PRS=$(echo "$ALL_PRS" | jq --arg me "$MY_USER" --arg sec_icon "$SECURITY_ICON" --argjson rules "$AUTHOR_RULES" '
   # "*" が未指定なら、リストにない作成者は最後尾・🧑 扱い
   ($rules | map(select(.login == "*")) | first // {icon: "🧑", rank: ($rules | length)}) as $default
   | map((.author.login // "ghost") as $login
@@ -79,8 +81,9 @@ BASE_PRS=$(echo "$ALL_PRS" | jq --arg me "$MY_USER" --argjson rules "$AUTHOR_RUL
     repo_index: .repo_index,
     author: $login,
     author_rank: $rule.rank,
-    # dependabot のセキュリティアップデート PR（security ラベル付き）は 🚨 で区別する
-    author_icon: (if $sec then "🚨" else $rule.icon end),
+    # dependabot のセキュリティアップデート PR（security ラベル付き）は SECURITY_ICON で区別する
+    is_security: $sec,
+    author_icon: (if $sec then $sec_icon else $rule.icon end),
     approved_by_me: (((.reviews // []) | map(select(.author.login == $me and .state == "APPROVED"))) | length > 0),
     reviewed_by_me: (((.reviews // []) | map(select(.author.login == $me))) | length > 0),
     my_last_review_at: (((.reviews // []) | map(select(.author.login == $me) | .submittedAt)) | max),
@@ -116,10 +119,12 @@ wait
 LAST_REQS=$(cat "$REQ_DIR"/*.json 2>/dev/null | jq -s 'map({(.key): .last_request_at}) | add // {}')
 [ -z "$LAST_REQS" ] && LAST_REQS="{}"
 
-echo "$BASE_PRS" | jq -r --arg me "$MY_USER" --argjson reqs "$LAST_REQS" '
-  # Draft PR は 📝 を付け、各セクションの最下位に並べる
-  def dm: if .is_draft then "📝 " else "" end;
+echo "$BASE_PRS" | jq -r --arg me "$MY_USER" --arg draft_icon "$DRAFT_ICON" --argjson reqs "$LAST_REQS" '
+  # Draft PR は DRAFT_ICON を付け、各セクションの最下位に並べる
+  def dm: if .is_draft then "\($draft_icon) " else "" end;
   def dr: if .is_draft then 1 else 0 end;
+  # セキュリティ更新 PR は、同じ作成者順位の中で通常の PR より上に並べる
+  def sc: if .is_security then 0 else 1 end;
   map(. + {
     # 自分の最終レビューより後にレビュー依頼イベントがある = 明示的な再依頼
     re_requested: (($reqs[.key] // null) as $req
@@ -127,15 +132,15 @@ echo "$BASE_PRS" | jq -r --arg me "$MY_USER" --argjson reqs "$LAST_REQS" '
   })
   | {
       # 未レビュー（自分のレビュー未実施 or 再レビュー依頼）
-      # 優先度順（Draft は最下位 / 再レビュー依頼 > AUTHOR_PRIORITY 順 > REPOS 順）にソート
+      # 優先度順（Draft は最下位 / 再レビュー依頼 > AUTHOR_PRIORITY 順 > セキュリティ更新 > REPOS 順）にソート
       untouched_prs: (
         map(select(.author != $me and ((.reviewed_by_me | not) or .re_requested)))
-        | sort_by([dr, (if .re_requested then 0 else 1 end), .author_rank, .repo_index])
+        | sort_by([dr, (if .re_requested then 0 else 1 end), .author_rank, sc, .repo_index])
       ),
       # コメント / 修正依頼はしたが Approve していない（再依頼分は未レビューへ）
-      commented_prs: (map(select(.author != $me and .reviewed_by_me and (.approved_by_me | not) and (.re_requested | not))) | sort_by([dr, .author_rank, .repo_index])),
+      commented_prs: (map(select(.author != $me and .reviewed_by_me and (.approved_by_me | not) and (.re_requested | not))) | sort_by([dr, .author_rank, sc, .repo_index])),
       my_prs: (map(select(.author == $me)) | sort_by([dr, .repo_index])),
-      approved_prs: (map(select(.author != $me and .approved_by_me and (.re_requested | not))) | sort_by([dr, .author_rank, .repo_index]))
+      approved_prs: (map(select(.author != $me and .approved_by_me and (.re_requested | not))) | sort_by([dr, .author_rank, sc, .repo_index]))
     }
   | [
       # メニューバーの件数は Draft を除いて数える

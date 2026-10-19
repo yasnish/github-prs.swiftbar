@@ -19,3 +19,10 @@ AUTHOR_PRIORITY=(
   "app/github-actions|🤖"
   "app/dependabot|📦"
 )
+
+# dependabot のセキュリティアップデート PR（security ラベル付き）のアイコン
+# 同じ作成者順位の中では、通常の PR より上に表示されます
+SECURITY_ICON="🚨"
+
+# Draft PR のアイコン（各セクションの最下位に表示されます）
+DRAFT_ICON="📝"
