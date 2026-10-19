@@ -48,7 +48,7 @@ for i in "${!REPOS[@]}"; do
   (
     REPO_NAME="${REPO#*/}"
     PRS=$(gh pr list -R "$REPO" --search "is:open involves:@me" \
-      --json number,title,url,author,labels,reviews,reviewRequests 2>/dev/null)
+      --json number,title,url,author,labels,reviews,reviewRequests,isDraft 2>/dev/null)
     if [ -n "$PRS" ] && [ "$PRS" != "[]" ]; then
       echo "$PRS" | jq --arg repo "$REPO_NAME" --arg full "$REPO" --argjson idx "$i" \
         'map(. + {repo: $repo, repo_full: $full, repo_index: $idx})' \
@@ -72,6 +72,7 @@ BASE_PRS=$(echo "$ALL_PRS" | jq --arg me "$MY_USER" --argjson rules "$AUTHOR_RUL
     key: "\(.repo_full)#\(.number)",
     repo_full: .repo_full,
     number: .number,
+    is_draft: (.isDraft // false),
     title: .title,
     url: .url,
     repo: .repo,
@@ -116,6 +117,9 @@ LAST_REQS=$(cat "$REQ_DIR"/*.json 2>/dev/null | jq -s 'map({(.key): .last_reques
 [ -z "$LAST_REQS" ] && LAST_REQS="{}"
 
 echo "$BASE_PRS" | jq -r --arg me "$MY_USER" --argjson reqs "$LAST_REQS" '
+  # Draft PR は 📝 を付け、各セクションの最下位に並べる
+  def dm: if .is_draft then "📝 " else "" end;
+  def dr: if .is_draft then 1 else 0 end;
   map(. + {
     # 自分の最終レビューより後にレビュー依頼イベントがある = 明示的な再依頼
     re_requested: (($reqs[.key] // null) as $req
@@ -123,30 +127,31 @@ echo "$BASE_PRS" | jq -r --arg me "$MY_USER" --argjson reqs "$LAST_REQS" '
   })
   | {
       # 未レビュー（自分のレビュー未実施 or 再レビュー依頼）
-      # 優先度順（再レビュー依頼 > AUTHOR_PRIORITY 順 > REPOS 順）にソート
+      # 優先度順（Draft は最下位 / 再レビュー依頼 > AUTHOR_PRIORITY 順 > REPOS 順）にソート
       untouched_prs: (
         map(select(.author != $me and ((.reviewed_by_me | not) or .re_requested)))
-        | sort_by([(if .re_requested then 0 else 1 end), .author_rank, .repo_index])
+        | sort_by([dr, (if .re_requested then 0 else 1 end), .author_rank, .repo_index])
       ),
       # コメント / 修正依頼はしたが Approve していない（再依頼分は未レビューへ）
-      commented_prs: (map(select(.author != $me and .reviewed_by_me and (.approved_by_me | not) and (.re_requested | not))) | sort_by([.author_rank, .repo_index])),
-      my_prs: (map(select(.author == $me)) | sort_by(.repo_index)),
-      approved_prs: (map(select(.author != $me and .approved_by_me and (.re_requested | not))) | sort_by([.author_rank, .repo_index]))
+      commented_prs: (map(select(.author != $me and .reviewed_by_me and (.approved_by_me | not) and (.re_requested | not))) | sort_by([dr, .author_rank, .repo_index])),
+      my_prs: (map(select(.author == $me)) | sort_by([dr, .repo_index])),
+      approved_prs: (map(select(.author != $me and .approved_by_me and (.re_requested | not))) | sort_by([dr, .author_rank, .repo_index]))
     }
   | [
-      "👀 \( .untouched_prs | length ) / 💬 \( .commented_prs | length ) / 🚀 \( .my_prs | length )",
+      # メニューバーの件数は Draft を除いて数える
+      "👀 \( .untouched_prs | map(select(.is_draft | not)) | length ) / 💬 \( .commented_prs | map(select(.is_draft | not)) | length ) / 🚀 \( .my_prs | map(select(.is_draft | not)) | length )",
       "---",
       "👀 未レビュー（自分のレビュー未実施・再レビュー依頼含む）",
-      ( if (.untouched_prs | length) == 0 then "  (なし)" else (.untouched_prs[] | "  \(if .re_requested then "🔁 " else "" end)\(.author_icon) [\(.repo)#\(.number)] \(.title) (@\(.author)) | href=\(.url)") end ),
+      ( if (.untouched_prs | length) == 0 then "  (なし)" else (.untouched_prs[] | "  \(if .re_requested then "🔁 " else "" end)\(dm)\(.author_icon) [\(.repo)#\(.number)] \(.title) (@\(.author)) | href=\(.url)") end ),
       "---",
       "💬 レビュー済み・未Approve（コメント/修正依頼）",
-      ( if (.commented_prs | length) == 0 then "  (なし)" else (.commented_prs[] | "  \(.author_icon) [\(.repo)#\(.number)] \(.title) (@\(.author)) | href=\(.url)") end ),
+      ( if (.commented_prs | length) == 0 then "  (なし)" else (.commented_prs[] | "  \(dm)\(.author_icon) [\(.repo)#\(.number)] \(.title) (@\(.author)) | href=\(.url)") end ),
       "---",
       "🚀 自分が作成したPR",
-      ( if (.my_prs | length) == 0 then "  (なし)" else (.my_prs[] | "  [\(.repo)#\(.number)] \(.title) | href=\(.url)") end ),
+      ( if (.my_prs | length) == 0 then "  (なし)" else (.my_prs[] | "  \(dm)[\(.repo)#\(.number)] \(.title) | href=\(.url)") end ),
       "---",
       "✅ 自分がApprove済みのPR（Open）",
-      ( if (.approved_prs | length) == 0 then "  (なし)" else (.approved_prs[] | "  \(.author_icon) [\(.repo)#\(.number)] \(.title) (@\(.author)) | href=\(.url)") end )
+      ( if (.approved_prs | length) == 0 then "  (なし)" else (.approved_prs[] | "  \(dm)\(.author_icon) [\(.repo)#\(.number)] \(.title) (@\(.author)) | href=\(.url)") end )
     ]
   | .[]
 '
